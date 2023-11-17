@@ -67,7 +67,6 @@ http://puclic_ip:30001/
 http://puclic_ip:30002/
 
 ```
-
 ## Screenshots
 
 ![Uygulama Ekran Görüntüsü](https://github.com/kezvur/kubernetes-proje/blob/main/phonebook_2.JPG)
