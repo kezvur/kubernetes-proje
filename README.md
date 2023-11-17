@@ -17,9 +17,7 @@ This project is a Phonebook project created using kubernetes,docker,terraform.
 
 **Database:** Mysql
  
-**infrastructure:** 
-
-Kubernetes-Docker-Terraform
+**infrastructure:** Kubernetes-Docker-Terraform
   
 
 ## Run on Your Computer
