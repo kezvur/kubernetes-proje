@@ -1,0 +1,9 @@
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: server-configmap
+  namespace: default
+data:
+  MYSQL_DATABASE: phonebook
+  MYSQL_USER: Techpro
+  MYSQL_DATABASE_HOST: mysql-deploy
