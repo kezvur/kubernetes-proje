@@ -1,19 +1,126 @@
 terraform {
   required_providers {
     aws = {
-      source  = "hashicorp/aws"
-      version = "5.23.1"
+      source = "hashicorp/aws"
+      version = "~> 5.0"
     }
   }
 }
 
 provider "aws" {
-  region = "us-east-1"  # Change this to your desired region
+  region  = "us-east-1"
 }
 
-resource "aws_security_group" "instance_sg" {
-  name        = "instance_sg"
-  description = "Allow desired ports for our instances"
+data "aws_caller_identity" "current" {}
+
+data "aws_region" "current" {}
+
+locals {
+  # change here, optional
+  name = "techproed"
+  keyname = "my_key"
+  instancetype = "t3a.medium"
+  ami = "ami-0557a15b87f6559cf"
+}
+
+resource "aws_instance" "master" {
+  ami                  = local.ami
+  instance_type        = local.instancetype
+  key_name             = local.keyname
+  iam_instance_profile = aws_iam_instance_profile.ec2connectprofile.name
+  user_data            = data.template_file.master.rendered
+  vpc_security_group_ids = [aws_security_group.tf-k8s-master-sec-gr.id]
+  tags = {
+    Name = "${local.name}-kube-master"
+  }
+}
+
+resource "aws_instance" "worker" {
+  ami                  = local.ami
+  instance_type        = local.instancetype
+  key_name             = local.keyname
+  iam_instance_profile = aws_iam_instance_profile.ec2connectprofile.name
+  vpc_security_group_ids = [aws_security_group.tf-k8s-master-sec-gr.id]
+  user_data            = data.template_file.worker.rendered
+  tags = {
+    Name = "${local.name}-kube-worker"
+  }
+  depends_on = [aws_instance.master]
+}
+
+resource "aws_iam_instance_profile" "ec2connectprofile" {
+  name = "ec2connectprofile-${local.name}"
+  role = aws_iam_role.ec2connectcli.name
+}
+
+resource "aws_iam_role" "ec2connectcli" {
+  name = "ec2connectcli-${local.name}"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Sid    = ""
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      },
+    ]
+  })
+
+  inline_policy {
+    name = "my_inline_policy"
+
+    policy = jsonencode({
+      Version = "2012-10-17"
+      Statement = [
+        {
+          "Effect" : "Allow",
+          "Action" : "ec2-instance-connect:SendSSHPublicKey",
+          "Resource" : "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:instance/*",
+          "Condition" : {
+            "StringEquals" : {
+              "ec2:osuser" : "ubuntu"
+            }
+          }
+        },
+        {
+          "Effect" : "Allow",
+          "Action" : "ec2:DescribeInstances",
+          "Resource" : "*"
+        }
+      ]
+    })
+  }
+}
+
+data "template_file" "worker" {
+  template = file("worker.sh")
+  vars = {
+    region = data.aws_region.current.name
+    master-id = aws_instance.master.id
+    master-private = aws_instance.master.private_ip
+  }
+
+}
+
+data "template_file" "master" {
+  template = file("master.sh")
+}
+
+resource "aws_security_group" "tf-k8s-master-sec-gr" {
+  name = "${local.name}-k8s-master-sec-gr"
+  tags = {
+    Name = "${local.name}-k8s-master-sec-gr"
+  }
+
+  ingress {
+    from_port = 0
+    protocol  = "-1"
+    to_port   = 0
+    self = true
+  }
 
   ingress {
     from_port   = 22
@@ -23,89 +130,40 @@ resource "aws_security_group" "instance_sg" {
   }
 
   ingress {
-    from_port   = 5000
-    to_port     = 5000
+    from_port   = 80
+    to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
-    from_port   = 3000
-    to_port     = 3000
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port   = 5432
-    to_port     = 5432
+    from_port   = 30000
+    to_port     = 32767
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
   egress {
     from_port   = 0
-    to_port     = 0
     protocol    = "-1"
+    to_port     = 0
     cidr_blocks = ["0.0.0.0/0"]
   }
 }
 
-resource "aws_instance" "control_node" {
-  ami           = "ami-026ebd4cfe2c043b2"
-  instance_type = "t2.medium"
-  key_name      = "my_key"  #user key_name paste
-  vpc_security_group_ids = [aws_security_group.instance_sg.id]
 
-  tags = {
-    Name = "ansible_control"
-    stack = "ansible_project"
-   
-  }
-
-  connection {
-    type        = "ssh"
-    host        = self.public_ip
-    user        = "ec2-user"
-    private_key = file("./my_key.pem")  #user key_name paste
-  }
-
-  
-  provisioner "file" {
-    source      = "./my_key.pem"  #user key_name paste
-    destination = "/home/ec2-user/my_key.pem"   
-  }
-
-  provisioner "remote-exec" {
-    inline = [
-      "sudo hostnamectl set-hostname Control-Node",
-      "sudo yum install -y python3",
-      "sudo yum install -y python3-pip",
-      "pip3 install --user ansible",
-      "pip3 install --user boto3",
-      "chmod 400 my_key.pem"
-    ]
-  }
+output "master_public_dns" {
+  value = aws_instance.master.public_dns
 }
 
-resource "aws_instance" "ansible_instance" {
-  count = 3
-  ami           = "ami-026ebd4cfe2c043b2"
-  instance_type = "t2.micro"
-  key_name      = "my_key"
-  vpc_security_group_ids = [aws_security_group.instance_sg.id]
-
-  tags = {
-    Name = count.index == 0 ? "ansible_postgresql" : count.index == 1 ? "ansible_nodejs" : "ansible_react"
-    stack = "ansible_project"
-    environment = "development"
-  }
+output "master_private_dns" {
+  value = aws_instance.master.private_dns
 }
 
-output "control_node_ip" {
-  value = aws_instance.control_node.public_ip
+output "worker_public_dns" {
+  value = aws_instance.worker.public_dns
 }
 
-output "ansible_instance_ip" {
-  value = aws_instance.ansible_instance.*.public_ip
+output "worker_private_dns" {
+  value = aws_instance.worker.private_dns
 }
