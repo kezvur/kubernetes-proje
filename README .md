@@ -9,7 +9,7 @@ This project is a Phonebook project created using kubernetes,docker,terraform.
 
 ## İnformation about the project
 
-İmagelar oluşturularak docker huba gönderildi.
+Images were created and sent to Docker Hub.
 
 ## Used technologies
 
